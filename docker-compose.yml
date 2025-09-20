@@ -1,6 +1,8 @@
+# Compose V2 não precisa de "version:"
+
 services:
   # =======================
-  # FRONTEND (NGINX)
+  # FRONTEND (NGINX) — ajuste se usar outro build
   # =======================
   frontend:
     build:
@@ -18,38 +20,43 @@ services:
   # =======================
   api:
     build:
-      context: ./java-api
+      context: ./java-api       # pasta onde está o código da API (pom.xml, src/, Dockerfile abaixo)
       dockerfile: Dockerfile
-      args:
-        GIT_REF: ${GIT_REF:-main}
     environment:
-      SPRING_PROFILES_ACTIVE: produtivo
+      # perfil certo para rodar DENTRO do compose
+      SPRING_PROFILES_ACTIVE: docker
 
-      # Mongo
-      SPRING_DATA_MONGODB_URI: ${MONGODB_URI:-mongodb://mongodb:27017/produtosdb}
+      # MONGO (hostname = serviço do compose)
+      MONGODB_URI: ${MONGODB_URI:-mongodb://mongodb:27017/produtosdb}
 
-      # RabbitMQ
-      SPRING_RABBITMQ_HOST: rabbitmq
-      SPRING_RABBITMQ_PORT: 5672
-      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER:-admin}
-      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASS:-admin}
+      # RABBITMQ (hostname = serviço do compose)
+      RABBIT_HOST: rabbitmq
+      RABBIT_PORT: 5672
+      RABBIT_USER: ${RABBIT_USER:-admin}
+      RABBIT_PASS: ${RABBIT_PASS:-admin}
 
-      # Actuator
-      MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
+      # actuator
+      MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: ${MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE:-health,info}
 
-      # 👇 força a classe principal correta
-      SPRING_MAIN_MAIN_CLASS: com.rabbit_deals.RabbitDeals.RabbitDealsApplication
+      # porta interna do Spring (se quiser mudar, sincronize com o frontend)
+      SERVER_PORT: ${SERVER_PORT:-8080}
     ports:
-      - "8080:8080"
+      - "${SERVER_PORT:-8080}:8080"
     depends_on:
       rabbitmq:
         condition: service_healthy
       mongodb:
         condition: service_healthy
+    healthcheck:
+      # se o actuator estiver protegido, remova/ajuste
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/actuator/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
     restart: unless-stopped
 
   # =======================
-  # PYTHON APP
+  # PYTHON APP (opcional)
   # =======================
   python-app:
     build:
@@ -59,9 +66,13 @@ services:
       API_BASE_URL: http://api:8080
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
-      RABBITMQ_USER: ${RABBITMQ_USER:-admin}
-      RABBITMQ_PASS: ${RABBITMQ_PASS:-admin}
+      RABBITMQ_USER: ${RABBIT_USER:-admin}
+      RABBITMQ_PASS: ${RABBIT_PASS:-admin}
       MONGODB_URI: ${MONGODB_URI:-mongodb://mongodb:27017/produtosdb}
+      # exemplos do seu .env
+      SCRAPER_SLEEP_SECS: ${SCRAPER_SLEEP_SECS:-120}
+      MAX_PAGINAS: ${MAX_PAGINAS:-1}
+      USER_AGENT: ${USER_AGENT:-Mozilla/5.0}
     ports:
       - "5000:5000"
     depends_on:
@@ -90,19 +101,19 @@ services:
     restart: unless-stopped
 
   # =======================
-  # MONGO EXPRESS
+  # MONGO EXPRESS (UI)
   # =======================
   mongo-express:
     image: mongo-express:1.0.2
     environment:
-      ME_CONFIG_MONGODB_URL: mongodb://mongodb:27017
-      ME_CONFIG_BASICAUTH_USERNAME: admin
-      ME_CONFIG_BASICAUTH_PASSWORD: admin
+      ME_CONFIG_MONGODB_URL: ${MONGODB_URI:-mongodb://mongodb:27017/produtosdb}
+      ME_CONFIG_BASICAUTH_USERNAME: ${ME_USER:-admin}
+      ME_CONFIG_BASICAUTH_PASSWORD: ${ME_PASS:-admin}
     depends_on:
       mongodb:
         condition: service_healthy
     ports:
-      - "8081:8081"
+      - "8081:8081"   # http://localhost:8081
     restart: unless-stopped
 
   # =======================
@@ -111,12 +122,12 @@ services:
   rabbitmq:
     image: rabbitmq:3.13-management
     hostname: rabbitmq
-    ports:
-      - "5672:5672"
-      - "15672:15672"
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-admin}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-admin}
+    ports:
+      - "5672:5672"    # AMQP
+      - "15672:15672"  # UI http://localhost:15672
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "check_running"]
       interval: 5s
