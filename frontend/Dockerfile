@@ -1,38 +1,26 @@
-# Fase de build para o frontend
+# ====== build (vite) ======
 FROM node:20-alpine AS build
-
 WORKDIR /app
 
-# Instalando git para clonar o repositório
+# Precisamos do git pra clonar
 RUN apk add --no-cache git
 
-# Argumento de referência do Git para escolher o branch
-ARG FRONTEND_GIT_REF=main
-
-# Clonando o repositório e trocando para o branch especificado
+# Clone do repositório do frontend
 RUN git clone https://github.com/RabbitDeals/front-end-RabbitDeals.git . \
-    && git checkout $FRONTEND_GIT_REF
+ && git checkout main
 
-# Instalando dependências do frontend
-RUN npm ci
+# Instala dependências (usa lockfile do repo se existir)
+RUN npm ci || npm install
 
-# Definindo a URL da API para o frontend
-ENV VITE_API_URL=/api
+# Injeta a URL da API no build (Vite lê VITE_* em build-time)
+ARG VITE_API_URL=http://localhost:8080
+ENV VITE_API_URL=${VITE_API_URL}
 
-# Rodando o build do frontend
 RUN npm run build
 
-# Fase de produção com Nginx
+# ====== runtime (nginx) ======
 FROM nginx:alpine
-
-# Definindo diretório do Nginx
-WORKDIR /usr/share/nginx/html
-
-# Copiando os arquivos gerados pelo build para o diretório do Nginx
-COPY --from=build /app/dist/ ./
-
-# Copiando a configuração personalizada do Nginx
-COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
-
-# Expondo a porta 80
+COPY --from=build /app/dist/ /usr/share/nginx/html/
+# COPY nginx.conf /etc/nginx/conf.d/default.conf  # (se você tiver um nginx.conf)
 EXPOSE 80
+CMD ["nginx","-g","daemon off;"]

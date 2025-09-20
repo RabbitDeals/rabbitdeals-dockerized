@@ -1,97 +1,128 @@
-version: '3.8'
-name: rabbitdeals-stack
-
 services:
-  rabbitmq:
-    image: rabbitmq:3-management
-    container_name: rabbitmq
+  # =======================
+  # FRONTEND (NGINX)
+  # =======================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "80:80"
+    depends_on:
+      api:
+        condition: service_started
     restart: unless-stopped
+
+  # =======================
+  # API JAVA (SPRING BOOT)
+  # =======================
+  api:
+    build:
+      context: ./java-api
+      dockerfile: Dockerfile
+      args:
+        GIT_REF: ${GIT_REF:-main}
+    environment:
+      SPRING_PROFILES_ACTIVE: produtivo
+
+      # Mongo
+      SPRING_DATA_MONGODB_URI: ${MONGODB_URI:-mongodb://mongodb:27017/produtosdb}
+
+      # RabbitMQ
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER:-admin}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASS:-admin}
+
+      # Actuator
+      MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
+
+      # 👇 força a classe principal correta
+      SPRING_MAIN_MAIN_CLASS: com.rabbit_deals.RabbitDeals.RabbitDealsApplication
+    ports:
+      - "8080:8080"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # =======================
+  # PYTHON APP
+  # =======================
+  python-app:
+    build:
+      context: ./python-app
+      dockerfile: Dockerfile
+    environment:
+      API_BASE_URL: http://api:8080
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: ${RABBITMQ_USER:-admin}
+      RABBITMQ_PASS: ${RABBITMQ_PASS:-admin}
+      MONGODB_URI: ${MONGODB_URI:-mongodb://mongodb:27017/produtosdb}
+    ports:
+      - "5000:5000"
+    depends_on:
+      api:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # =======================
+  # MONGODB
+  # =======================
+  mongodb:
+    image: mongo:7
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  # =======================
+  # MONGO EXPRESS
+  # =======================
+  mongo-express:
+    image: mongo-express:1.0.2
+    environment:
+      ME_CONFIG_MONGODB_URL: mongodb://mongodb:27017
+      ME_CONFIG_BASICAUTH_USERNAME: admin
+      ME_CONFIG_BASICAUTH_PASSWORD: admin
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    ports:
+      - "8081:8081"
+    restart: unless-stopped
+
+  # =======================
+  # RABBITMQ
+  # =======================
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    hostname: rabbitmq
     ports:
       - "5672:5672"
       - "15672:15672"
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-admin}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-admin}
-
-  mongodb:
-    image: mongo:6.0
-    container_name: mongodb
-    restart: unless-stopped
-    ports:
-      - "27017:27017"
-    environment:
-      MONGO_INITDB_DATABASE: produtosdb
-    volumes:
-      - mongo_data:/data/db
     healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "mongodb://localhost:27017/produtosdb", "--eval", "db.runCommand({ ping: 1 })"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-
-  mongo-express:
-    image: mongo-express:latest
-    container_name: mongo-express
+      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
     restart: unless-stopped
-    ports:
-      - "8081:8081"
-    environment:
-      ME_CONFIG_MONGODB_URL: mongodb://mongodb:27017/
-      ME_CONFIG_BASICAUTH_USERNAME: ${ME_USER:-admin}
-      ME_CONFIG_BASICAUTH_PASSWORD: ${ME_PASS:-admin}
-
-  api:
-    build:
-      context: .
-      dockerfile: java-api/Dockerfile
-    container_name: api
-    restart: unless-stopped
-    ports:
-      - "8085:8080"    
-    environment:
-      SPRING_PROFILES_ACTIVE: produtivo
-      SPRING_DATA_MONGODB_URI: mongodb://mongodb:27017/produtosdb
-      SERVER_PORT: 8080
-      RABBIT_USER: ${RABBIT_USER:-admin}
-      RABBIT_PASS: ${RABBIT_PASS:-admin}
-      MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: health,info
-    depends_on:
-      mongodb:
-        condition: service_healthy
-
-  python-app:
-    build:
-      context: ./python-app
-      dockerfile: Dockerfile
-    container_name: python-app
-    restart: unless-stopped
-    environment:
-      RABBIT_HOST: rabbitmq
-      RABBIT_USER: ${RABBIT_USER:-admin}
-      RABBIT_PASS: ${RABBIT_PASS:-admin}
-      RABBIT_EXCHANGE: ${RABBITMQ_EXCHANGE:-categoria_exchange}
-      RABBIT_QUEUE_TECNOLOGIA: ${RABBITMQ_QUEUE_TECNOLOGIA:-tecnologia_queue}
-      RABBIT_QUEUE_ACADEMIA: ${RABBITMQ_QUEUE_ACADEMIA:-academia_queue}
-      SCRAPER_SLEEP_SECS: ${SCRAPER_SLEEP_SECS:-120}
-      MAX_PAGINAS: ${MAX_PAGINAS:-1}
-      USER_AGENT: ${USER_AGENT:-Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36}
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-      api:
-        condition: service_started
-
-  frontend:
-    build:
-      context: .
-      dockerfile: frontend/Dockerfile
-    container_name: frontend
-    restart: unless-stopped
-    ports:
-      - "80:80"        
-    depends_on:
-      api:
-        condition: service_started
 
 volumes:
-  mongo_data:
+  mongo-data:
