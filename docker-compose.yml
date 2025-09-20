@@ -1,0 +1,106 @@
+version: '3.8'
+name: rabbitdeals-stack
+
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    restart: unless-stopped
+    ports:
+      - "5672:5672"     # AMQP
+      - "15672:15672"   # Console web
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-admin}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-admin}
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  mongodb:
+    image: mongo:6.0
+    container_name: mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_DATABASE: produtosdb
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "mongodb://localhost:27017/produtosdb", "--eval", "db.runCommand({ ping: 1 })"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  mongo-express:
+    image: mongo-express:latest
+    container_name: mongo-express
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    environment:
+      # Use a URL completa para evitar fallback para "mongo"
+      ME_CONFIG_MONGODB_URL: mongodb://mongodb:27017/
+      ME_CONFIG_BASICAUTH_USERNAME: ${ME_USER:-admin}
+      ME_CONFIG_BASICAUTH_PASSWORD: ${ME_PASS:-admin}
+    depends_on:
+      mongodb:
+        condition: service_healthy
+
+  api:
+    build:
+      context: .
+      dockerfile: java-api/Dockerfile   # clona e builda a API direto do GitHub
+    container_name: api
+    restart: unless-stopped
+    ports:
+      - "8085:8080"   # Porta externa alterada para evitar conflito (Swagger em http://localhost:8085)
+    environment:
+      SPRING_DATA_MONGODB_URI: ${MONGODB_URI:-mongodb://mongodb:27017/produtosdb}
+      SERVER_PORT: 8080
+      MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: health,info
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    # Observação: healthcheck HTTP removido para evitar dependência de curl/wget no runtime
+
+  python-app:
+    build:
+      context: ./python-app
+      dockerfile: Dockerfile
+    container_name: python-app
+    restart: unless-stopped
+    environment:
+      RABBIT_HOST: rabbitmq
+      RABBIT_USER: ${RABBITMQ_USER:-admin}
+      RABBIT_PASS: ${RABBITMQ_PASS:-admin}
+      RABBIT_EXCHANGE: ${RABBITMQ_EXCHANGE:-categoria_exchange}
+      RABBIT_QUEUE_TECNOLOGIA: ${RABBITMQ_QUEUE_TECNOLOGIA:-tecnologia_queue}
+      RABBIT_QUEUE_ACADEMIA: ${RABBITMQ_QUEUE_ACADEMIA:-academia_queue}
+      SCRAPER_SLEEP_SECS: ${SCRAPER_SLEEP_SECS:-120}
+      MAX_PAGINAS: ${MAX_PAGINAS:-1}
+      USER_AGENT: ${USER_AGENT:-Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      api:          # aguarda API iniciar (sem healthcheck)
+        condition: service_started
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile   # clona e builda o front direto do GitHub
+      # args:
+      #   FRONTEND_GIT_REF: main        # opcional: escolher branch/tag/commit
+    container_name: frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"      # site em http://localhost
+    depends_on:
+      api:
+        condition: service_started
+
+volumes:
+  mongo_data:
