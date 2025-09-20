@@ -20,26 +20,16 @@ services:
   # =======================
   api:
     build:
-      context: ./java-api       # pasta onde está o código da API (pom.xml, src/, Dockerfile abaixo)
+      context: ./java-api           # pasta onde ficará este Dockerfile
       dockerfile: Dockerfile
+      args:
+        GIT_REF: ${GIT_REF:-main}
+    image: rabbitdeals-dockerized-api:latest
     environment:
-      # perfil certo para rodar DENTRO do compose
       SPRING_PROFILES_ACTIVE: docker
-
-      # MONGO (hostname = serviço do compose)
-      MONGODB_URI: ${MONGODB_URI:-mongodb://mongodb:27017/produtosdb}
-
-      # RABBITMQ (hostname = serviço do compose)
-      RABBIT_HOST: rabbitmq
-      RABBIT_PORT: 5672
-      RABBIT_USER: ${RABBIT_USER:-admin}
-      RABBIT_PASS: ${RABBIT_PASS:-admin}
-
-      # actuator
-      MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: ${MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE:-health,info}
-
-      # porta interna do Spring (se quiser mudar, sincronize com o frontend)
-      SERVER_PORT: ${SERVER_PORT:-8080}
+      RABBIT_USER: ${RABBIT_USER}
+      RABBIT_PASS: ${RABBIT_PASS}
+      SPRING_DATA_MONGODB_URI: ${MONGODB_URI}
     ports:
       - "${SERVER_PORT:-8080}:8080"
     depends_on:
@@ -47,13 +37,8 @@ services:
         condition: service_healthy
       mongodb:
         condition: service_healthy
-    healthcheck:
-      # se o actuator estiver protegido, remova/ajuste
-      test: ["CMD", "wget", "-qO-", "http://localhost:8080/actuator/health"]
-      interval: 10s
-      timeout: 3s
-      retries: 10
     restart: unless-stopped
+
 
   # =======================
   # PYTHON APP (opcional)
